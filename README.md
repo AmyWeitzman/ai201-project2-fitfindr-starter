@@ -92,6 +92,30 @@ python agent.py
 
 ---
 
+### `compare_price(item)`
+
+**Purpose:** Estimates whether a listing's price is fair by comparing it against similar items in the dataset. "Similar" means same category with at least one overlapping style tag.
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `item` | `dict` | A listing dict (e.g., `session["selected_item"]`) |
+
+**Output:** A dict with the following fields:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `verdict` | `str` | `"great deal"`, `"fair price"`, `"a bit high"`, or `"no comparison available"` |
+| `item_price` | `float` | The listing's price |
+| `avg_price` | `float \| None` | Average price across comparable listings |
+| `min_price` | `float \| None` | Cheapest comparable |
+| `max_price` | `float \| None` | Most expensive comparable |
+| `comparable_count` | `int` | Number of comparable listings found |
+| `summary` | `str` | Human-readable one-line summary |
+
+Verdict thresholds: below 80% of the average -> `"great deal"`, above 120% -> `"a bit high"`, otherwise `"fair price"`. Never raises an exception - if no comparables exist, returns `"no comparison available"` with `None` price fields.
+
+---
+
 ## Planning Loop
 
 1. **Parse the query** using regex to extract a `description`, `size` (if mentioned), and `max_price` (if mentioned). Filler phrases like "I'm looking for" are stripped so the search gets clean keywords.
@@ -100,11 +124,13 @@ python agent.py
 
 3. **Select the top result** (`results[0]`) and store it in the session as `selected_item`.
 
-4. **Suggest an outfit** using the selected item and the user's wardrobe.
+4. **Compare the price** against similar listings in the dataset. Stored in `session["price_verdict"]`. This step always completes - a "no comparison available" result is stored if no comparables exist.
 
-5. **Generate a fit card** using the outfit suggestion and the selected item.
+5. **Suggest an outfit** using the selected item and the user's wardrobe.
 
-6. **Return the session dict.** The caller checks `session["error"]` first to know whether the interaction succeeded.
+6. **Generate a fit card** using the outfit suggestion and the selected item.
+
+7. **Return the session dict.** The caller checks `session["error"]` first to know whether the interaction succeeded.
 
 The key branching condition is after step 2: if `search_results` is empty, the loop exits immediately. This means the agent's behavior is visibly different for a query that matches listings versus one that doesn't.
 

@@ -1,15 +1,14 @@
 """
 tools.py
 
-The three required FitFindr tools. Each tool is a standalone function that
-can be called and tested independently before being wired into the agent loop.
-
-Complete and test each tool before moving to agent.py.
+The FitFindr tools. Each tool is a standalone function that can be called
+and tested independently before being wired into the agent loop.
 
 Tools:
     search_listings(description, size, max_price)  → list[dict]
     suggest_outfit(new_item, wardrobe)              → str
     create_fit_card(outfit, new_item)               → str
+    compare_price(item)                             → dict
 """
 
 import os
@@ -186,3 +185,82 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         temperature=1.2,
     )
     return response.choices[0].message.content
+
+
+# ── Tool 4: compare_price ─────────────────────────────────────────────────────
+
+def compare_price(item: dict) -> dict:
+    """
+    Estimate whether a listing's price is fair by comparing it against
+    similar items in the dataset.
+
+    "Similar" means: same category AND at least one overlapping style tag.
+    The item itself is excluded from the comparison pool.
+
+    Args:
+        item: A listing dict (e.g., the selected_item from the agent session).
+
+    Returns:
+        A dict with the following fields:
+            verdict          (str):   "great deal", "fair price", or "a bit high"
+            item_price       (float): the listing's price
+            avg_price        (float | None): average price of comparable listings
+            min_price        (float | None): cheapest comparable
+            max_price        (float | None): most expensive comparable
+            comparable_count (int):   number of comparable listings found
+            summary          (str):   human-readable one-line summary
+
+        If no comparable listings exist, verdict is "no comparison available"
+        and the price fields are None. Does NOT raise an exception.
+    """
+    all_listings = load_listings()
+    item_tags = set(item["style_tags"])
+
+    comparables = [
+        l for l in all_listings
+        if l["id"] != item["id"]
+        and l["category"] == item["category"]
+        and item_tags & set(l["style_tags"])
+    ]
+
+    if not comparables:
+        return {
+            "verdict": "no comparison available",
+            "item_price": item["price"],
+            "avg_price": None,
+            "min_price": None,
+            "max_price": None,
+            "comparable_count": 0,
+            "summary": (
+                f"No comparable listings found for {item['title']} — "
+                "can't estimate whether this price is fair."
+            ),
+        }
+
+    prices = [l["price"] for l in comparables]
+    avg = sum(prices) / len(prices)
+    min_price = min(prices)
+    max_price = max(prices)
+
+    ratio = item["price"] / avg
+    if ratio < 0.8:
+        verdict = "great deal"
+    elif ratio > 1.2:
+        verdict = "a bit high"
+    else:
+        verdict = "fair price"
+
+    return {
+        "verdict": verdict,
+        "item_price": item["price"],
+        "avg_price": round(avg, 2),
+        "min_price": min_price,
+        "max_price": max_price,
+        "comparable_count": len(comparables),
+        "summary": (
+            f"${item['price']:.2f} vs. avg ${avg:.2f} across "
+            f"{len(comparables)} similar listing(s) "
+            f"(range: ${min_price:.2f}–${max_price:.2f}). "
+            f"Verdict: {verdict}."
+        ),
+    }

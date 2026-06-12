@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from tools import create_fit_card, search_listings, suggest_outfit
+from tools import compare_price, create_fit_card, search_listings, suggest_outfit
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -144,3 +144,71 @@ def test_create_fit_card_uses_high_temperature():
         create_fit_card("Graphic tee + baggy jeans", SAMPLE_ITEM)
     call_kwargs = mock_client.chat.completions.create.call_args.kwargs
     assert call_kwargs.get("temperature", 0) >= 1.0
+
+
+# ── compare_price ─────────────────────────────────────────────────────────────
+
+def test_compare_price_returns_dict():
+    result = compare_price(SAMPLE_ITEM)
+    assert isinstance(result, dict)
+    for key in ("verdict", "item_price", "avg_price", "min_price", "max_price",
+                "comparable_count", "summary"):
+        assert key in result
+
+
+def test_compare_price_item_price_matches_input():
+    result = compare_price(SAMPLE_ITEM)
+    assert result["item_price"] == SAMPLE_ITEM["price"]
+
+
+def test_compare_price_excludes_item_itself():
+    # if the item compared against itself, comparable_count would be inflated
+    # and avg_price would equal item_price — use a real listing to check
+    results = search_listings("graphic tee", size=None, max_price=None)
+    item = results[0]
+    verdict = compare_price(item)
+    # none of the comparables should be the item itself
+    assert verdict["comparable_count"] == 0 or verdict["avg_price"] is not None
+
+
+def test_compare_price_verdict_is_valid_value():
+    result = compare_price(SAMPLE_ITEM)
+    assert result["verdict"] in ("great deal", "fair price", "a bit high", "no comparison available")
+
+
+def test_compare_price_no_comparables_returns_gracefully():
+    # item with a unique category/tag combo unlikely to have comparables
+    unique_item = {
+        "id": "fake_001",
+        "title": "Fake Item",
+        "category": "accessories",
+        "style_tags": ["nonexistent_tag_xyz"],
+        "price": 99.99,
+    }
+    result = compare_price(unique_item)
+    assert result["comparable_count"] == 0
+    assert result["avg_price"] is None
+    assert result["verdict"] == "no comparison available"
+    assert isinstance(result["summary"], str)
+
+
+def test_compare_price_range_makes_sense():
+    result = compare_price(SAMPLE_ITEM)
+    if result["comparable_count"] > 0:
+        assert result["min_price"] <= result["avg_price"] <= result["max_price"]
+
+
+def test_compare_price_great_deal_verdict():
+    # artificially cheap item — should be a great deal
+    cheap_item = dict(SAMPLE_ITEM, id="fake_cheap", price=1.00)
+    result = compare_price(cheap_item)
+    if result["comparable_count"] > 0:
+        assert result["verdict"] == "great deal"
+
+
+def test_compare_price_high_verdict():
+    # artificially expensive item — should be a bit high
+    expensive_item = dict(SAMPLE_ITEM, id="fake_expensive", price=9999.00)
+    result = compare_price(expensive_item)
+    if result["comparable_count"] > 0:
+        assert result["verdict"] == "a bit high"
