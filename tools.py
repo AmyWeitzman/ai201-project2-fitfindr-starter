@@ -16,7 +16,7 @@ import os
 from dotenv import load_dotenv
 from groq import Groq
 
-from utils.data_loader import load_listings
+from utils.data_loader import load_listings, load_trend_posts
 
 load_dotenv()
 
@@ -192,7 +192,81 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
     return response.choices[0].message.content
 
 
-# ── Tool 4: compare_price ─────────────────────────────────────────────────────
+# ── Tool 4: get_trending_styles ──────────────────────────────────────────────
+
+def get_trending_styles(style_tags: list[str]) -> dict:
+    """
+    Surface recent social posts about styles that match the given tags.
+
+    Matches mock trend posts by style_tag overlap with the item's tags.
+    Posts are ranked by number of matching tags, then by recency.
+
+    Args:
+        style_tags: Style tags from the selected listing (e.g. ["vintage", "grunge"]).
+
+    Returns:
+        A dict with:
+            matched_posts  (list[dict]): up to 3 most relevant trend posts,
+                           each containing caption, hashtags, platform,
+                           post_count, and days_ago.
+            top_hashtags   (list[str]):  up to 5 most popular hashtags across
+                           matched posts, sorted by post_count descending.
+            summary        (str):        one human-readable line summarising
+                           the trend activity, or a fallback if no matches.
+
+        Returns a summary-only dict if no posts match.
+    """
+    posts = load_trend_posts()
+    query_tags = set(t.lower() for t in style_tags)
+
+    def overlap(post):
+        return len(query_tags & set(t.lower() for t in post["style_tags"]))
+
+    scored = [(overlap(p), p) for p in posts if overlap(p) > 0]
+    scored.sort(key=lambda x: (-x[0], x[1]["days_ago"]))
+
+    top = [p for _, p in scored[:3]]
+
+    if not top:
+        return {
+            "matched_posts": [],
+            "top_hashtags": [],
+            "summary": "No recent trend posts found for this style.",
+        }
+
+    all_hashtags = [tag for p in top for tag in p["hashtags"]]
+    seen = set()
+    unique_hashtags = []
+    for tag in all_hashtags:
+        if tag not in seen:
+            seen.add(tag)
+            unique_hashtags.append(tag)
+
+    total_posts = sum(p["post_count"] for p in top)
+    platforms = sorted({p["platform"] for p in top})
+    freshest = min(p["days_ago"] for p in top)
+    summary = (
+        f"~{total_posts:,} posts about this style on {', '.join(platforms)} "
+        f"— most recent {freshest} day{'s' if freshest != 1 else ''} ago."
+    )
+
+    return {
+        "matched_posts": [
+            {
+                "caption": p["caption"],
+                "hashtags": p["hashtags"],
+                "platform": p["platform"],
+                "post_count": p["post_count"],
+                "days_ago": p["days_ago"],
+            }
+            for p in top
+        ],
+        "top_hashtags": unique_hashtags[:5],
+        "summary": summary,
+    }
+
+
+# ── Tool 5: compare_price ─────────────────────────────────────────────────────
 
 def compare_price(item: dict) -> dict:
     """

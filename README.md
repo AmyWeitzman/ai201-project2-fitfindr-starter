@@ -10,12 +10,15 @@ Each listing has: `id`, `title`, `description`, `category`, `style_tags`, `size`
 
 `data/wardrobe_schema.json` defines the format the agent uses to represent a user's existing wardrobe. It includes an example wardrobe with 10 items for testing and an empty wardrobe template for new users.
 
+`data/trend_posts.json` contains 22 mock social posts across platforms (TikTok, Instagram, Depop, Poshmark). Each post has a `caption`, `hashtags`, `style_tags`, `post_count`, and `days_ago` field, used by `get_trending_styles` to surface what's currently popular for a given style.
+
 ```python
-from utils.data_loader import load_listings, get_example_wardrobe, get_empty_wardrobe
+from utils.data_loader import load_listings, load_trend_posts, get_example_wardrobe, get_empty_wardrobe
 
 listings = load_listings()
 wardrobe = get_example_wardrobe()   # 10-item sample wardrobe
 empty    = get_empty_wardrobe()     # blank starting template
+posts    = load_trend_posts()       # 22 mock social trend posts
 ```
 
 ---
@@ -92,6 +95,26 @@ python agent.py
 
 ---
 
+### `get_trending_styles(style_tags)`
+
+**Purpose:** Surfaces recent social posts about styles that match the item the user is considering. Posts are ranked by how many style tags overlap with the item's tags, then by recency. Used to show the user whether the style they're shopping for is currently popular.
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `style_tags` | `list[str]` | Style tags from the selected listing (e.g. `["vintage", "grunge", "streetwear"]`) |
+
+**Output:** A dict with the following fields:
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `matched_posts` | `list[dict]` | Up to 3 most relevant trend posts, each with `caption`, `hashtags`, `platform`, `post_count`, and `days_ago` |
+| `top_hashtags` | `list[str]` | Up to 5 popular hashtags across matched posts |
+| `summary` | `str` | One line with total post count, platforms, and recency |
+
+Returns an empty `matched_posts` list and a fallback summary string if no posts match.
+
+---
+
 ### `compare_price(item)`
 
 **Purpose:** Estimates whether a listing's price is fair by comparing it against similar items in the dataset. "Similar" means same category with at least one overlapping style tag.
@@ -124,7 +147,10 @@ Verdict thresholds: below 80% of the average -> `"great deal"`, above 120% -> `"
 
 3. **Select the top result** (`results[0]`) and store it in the session as `selected_item`.
 
-4. **Compare the price** against similar listings in the dataset. Stored in `session["price_verdict"]`. This step always completes - a "no comparison available" result is stored if no comparables exist.
+4. **Compare the price and check trend activity** for the selected item.
+
+   - `compare_price` scores the listing against similar items in the dataset. Stored in `session["price_verdict"]`. Returns "no comparison available" if no comparables exist.
+   - `get_trending_styles` looks up recent social posts whose style tags overlap with the item's. Stored in `session["trend_report"]`. Shown in the listing panel alongside item details.
 
 5. **Suggest an outfit** using the selected item and the user's wardrobe.
 
@@ -149,6 +175,8 @@ session = {
     "wardrobe": {...},
     "outfit_suggestion": None,
     "fit_card": None,
+    "price_verdict": None,
+    "trend_report": None,
     "error": None,
 }
 ```

@@ -61,6 +61,25 @@ def get_example_wardrobe() -> dict:
     return schema["example_wardrobe"]
 
 
+def load_trend_posts() -> list[dict]:
+    """
+    Load mock social trend posts from the dataset.
+
+    Returns:
+        A list of trend post dicts. Each post has:
+        - id (str)
+        - caption (str)
+        - hashtags (list[str])
+        - style_tags (list[str])
+        - platform (str): tiktok, instagram, depop, or poshmark
+        - post_count (int): approximate number of posts using these tags
+        - days_ago (int): how recently this trend was active
+    """
+    path = os.path.join(_DATA_DIR, "trend_posts.json")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def get_empty_wardrobe() -> dict:
     """
     Convenience function — returns an empty wardrobe template.

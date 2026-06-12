@@ -20,7 +20,7 @@ Usage (once implemented):
 
 import re
 
-from tools import search_listings, suggest_outfit, create_fit_card, compare_price
+from tools import search_listings, suggest_outfit, create_fit_card, compare_price, get_trending_styles
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -44,6 +44,7 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "outfit_suggestion": None,   # string returned by suggest_outfit
         "fit_card": None,            # string returned by create_fit_card
         "price_verdict": None,       # dict returned by compare_price
+        "trend_report": None,        # dict returned by get_trending_styles
         "error": None,               # set if the interaction ended early
     }
 
@@ -185,6 +186,9 @@ def run_agent(query: str, wardrobe: dict, style_tags: list | None = None) -> dic
 
     # Step 4b: Compare price against similar listings
     session["price_verdict"] = compare_price(session["selected_item"])
+
+    # Step 4c: Check trend activity for the item's style tags
+    session["trend_report"] = get_trending_styles(session["selected_item"].get("style_tags", []))
 
     # Step 5: Suggest outfit — include session style tags if any have accumulated
     style_context = ""

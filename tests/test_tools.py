@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from tools import compare_price, create_fit_card, search_listings, suggest_outfit
+from tools import compare_price, create_fit_card, get_trending_styles, search_listings, suggest_outfit
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -212,3 +212,48 @@ def test_compare_price_high_verdict():
     result = compare_price(expensive_item)
     if result["comparable_count"] > 0:
         assert result["verdict"] == "a bit high"
+
+
+# ── get_trending_styles ───────────────────────────────────────────────────────
+
+def test_trending_returns_dict():
+    result = get_trending_styles(["vintage", "grunge", "streetwear"])
+    assert isinstance(result, dict)
+    for key in ("matched_posts", "top_hashtags", "summary"):
+        assert key in result
+
+
+def test_trending_matched_posts_are_dicts():
+    result = get_trending_styles(["vintage", "grunge"])
+    for post in result["matched_posts"]:
+        for field in ("caption", "hashtags", "platform", "post_count", "days_ago"):
+            assert field in post
+
+
+def test_trending_returns_at_most_three_posts():
+    result = get_trending_styles(["vintage", "streetwear", "grunge", "graphic tee"])
+    assert len(result["matched_posts"]) <= 3
+
+
+def test_trending_no_match_returns_gracefully():
+    result = get_trending_styles(["nonexistent_style_xyz"])
+    assert result["matched_posts"] == []
+    assert result["top_hashtags"] == []
+    assert isinstance(result["summary"], str)
+
+
+def test_trending_top_hashtags_capped_at_five():
+    result = get_trending_styles(["vintage", "grunge", "streetwear"])
+    assert len(result["top_hashtags"]) <= 5
+
+
+def test_trending_summary_is_nonempty_string():
+    result = get_trending_styles(["y2k", "platform"])
+    assert isinstance(result["summary"], str)
+    assert len(result["summary"]) > 0
+
+
+def test_trending_empty_tags_returns_gracefully():
+    result = get_trending_styles([])
+    assert isinstance(result, dict)
+    assert result["matched_posts"] == []

@@ -89,6 +89,21 @@ def handle_query(
             f"Verdict: {verdict['verdict'].title()} {emoji}",
         ])
 
+    # Append trend activity to the listing panel
+    trend = session.get("trend_report")
+    if trend and trend["matched_posts"]:
+        trend_lines = ["", "─" * 40, "🔥 Trending now", trend["summary"], ""]
+        for post in trend["matched_posts"]:
+            age = f"{post['days_ago']}d ago"
+            count = f"{post['post_count']:,} posts"
+            trend_lines.append(f"[{post['platform']} · {count} · {age}]")
+            trend_lines.append(f'"{post["caption"]}"')
+            trend_lines.append("  " + "  ".join(post["hashtags"][:4]))
+            trend_lines.append("")
+        if trend["top_hashtags"]:
+            trend_lines.append("Top tags: " + "  ".join(trend["top_hashtags"]))
+        listing_text += "\n" + "\n".join(trend_lines)
+
     # Accumulate style tags from this search into session state
     updated_tags = sorted(set(style_tags) | set(item.get("style_tags", [])))[:20]
 
