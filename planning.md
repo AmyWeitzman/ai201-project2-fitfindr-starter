@@ -137,13 +137,14 @@ Write out what a full user interaction looks like from start to finish — tool 
 **Example user query:** "I'm looking for a vintage graphic tee under $30. I mostly wear baggy jeans and chunky sneakers. What's out there and how would I style it?"
 
 **Step 1:**
-<!-- What does the agent do first? Which tool is called? With what input? -->
+The agent should call the `search_listings` tool, passing in info from the user's query as arguments matching the signature of the function. Ex: `search_listings('vintage graphic tee', max_price=30)`
 
 **Step 2:**
-<!-- What happens next? What was returned from step 1? What tool is called now? -->
+If Step 1 returns a listing, the agent should then call the `suggest_outfit` tool, passing in info from that listing and the user'swardrobe. Ex: `suggest_outfit(new_item=<listing from step 1>, wardrobe=<user's wardrobe>)`. If Step 1 does not return a listing, the agent should first try a fallback strategy, such as being less restrictive on the search criteria by removing the size parameter,and if that isn't successful in finding a match either, the agent should respond to the user saying they couldn't find a match and propt user to try again with a different query.
 
 **Step 3:**
-<!-- Continue until the full interaction is complete -->
+If Step 2 returns an outfit, the agent should then call the `create_fit_card` tool, passing in info from that outfit. Ex: `create_fit_card(outfit=<outfit from step 2>, new_item=><listing from step 1>)`. If Step 2 does not return an outfit, the agent should tell the user they can't find a matching outfit given their wardrobe.
+
 
 **Final output to user:**
-<!-- What does the user actually see at the end? -->
+If all the tools run successfully, the user should see a new clothing item suggestion, suggested ways to make a whole outfit with that item based on their wardrobe, and a brief description that is suitable for a social media post.
