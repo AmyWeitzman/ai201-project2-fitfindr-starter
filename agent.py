@@ -104,7 +104,7 @@ def _parse_query(query: str) -> dict:
 
 # ── planning loop ─────────────────────────────────────────────────────────────
 
-def run_agent(query: str, wardrobe: dict) -> dict:
+def run_agent(query: str, wardrobe: dict, style_tags: list | None = None) -> dict:
     """
     Main agent entry point. Runs the FitFindr planning loop for a single
     user interaction and returns the completed session dict.
@@ -186,10 +186,15 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     # Step 4b: Compare price against similar listings
     session["price_verdict"] = compare_price(session["selected_item"])
 
-    # Step 5: Suggest outfit using selected item and wardrobe
+    # Step 5: Suggest outfit — include session style tags if any have accumulated
+    style_context = ""
+    if style_tags:
+        style_context = "tends toward " + ", ".join(style_tags[:10])
+
     session["outfit_suggestion"] = suggest_outfit(
         new_item=session["selected_item"],
         wardrobe=session["wardrobe"],
+        style_context=style_context,
     )
 
     # Step 6: Generate fit card from outfit and selected item

@@ -20,22 +20,27 @@ from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 # ── query handler ─────────────────────────────────────────────────────────────
 
-def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str, str]:
+def handle_query(
+    user_query: str,
+    wardrobe_choice: str,
+    style_tags: list,
+) -> tuple[str, str, str, str, list]:
     """
     Called by Gradio when the user submits a query.
 
     Args:
-        user_query:      The text the user typed into the search box.
+        user_query:     The text the user typed into the search box.
         wardrobe_choice: Either "Example wardrobe" or "Empty wardrobe (new user)".
+        style_tags:     Accumulated style tags from earlier searches this session
+                        (held in gr.State — starts empty, grows automatically).
 
     Returns:
-        A tuple of four strings:
-            (listing_text, outfit_suggestion, fit_card, price_text)
-        Each string maps to one of the four output panels in the UI.
+        A tuple of four visible strings plus the updated style_tags state:
+            (listing_text, outfit_suggestion, fit_card, price_text, updated_style_tags)
     """
     # Guard empty query
     if not user_query or not user_query.strip():
-        return "Please enter a search query.", "", "", ""
+        return "Please enter a search query.", "", "", "", style_tags
 
     # Select wardrobe based on radio choice
     wardrobe = (
@@ -44,12 +49,12 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str, 
         else get_empty_wardrobe()
     )
 
-    # Run the planning loop
-    session = run_agent(user_query.strip(), wardrobe)
+    # Run the planning loop, passing in whatever style tags have built up this session
+    session = run_agent(user_query.strip(), wardrobe, style_tags=style_tags)
 
     # Surface error in first panel if the agent exited early
     if session["error"]:
-        return session["error"], "", "", ""
+        return session["error"], "", "", "", style_tags
 
     # Format the selected listing into readable text
     item = session["selected_item"]
@@ -84,7 +89,10 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str, 
             f"Verdict: {verdict['verdict'].title()} {emoji}",
         ])
 
-    return listing_text, session["outfit_suggestion"], session["fit_card"], price_text
+    # Accumulate style tags from this search into session state
+    updated_tags = sorted(set(style_tags) | set(item.get("style_tags", [])))[:20]
+
+    return listing_text, session["outfit_suggestion"], session["fit_card"], price_text, updated_tags
 
 
 # ── interface ─────────────────────────────────────────────────────────────────
@@ -104,6 +112,9 @@ def build_interface():
 Find secondhand pieces and get outfit ideas based on your wardrobe.
 Describe what you're looking for — include size and price if you want to filter.
         """)
+
+        # Holds accumulated style tags for the duration of the browser session
+        style_state = gr.State([])
 
         with gr.Row():
             query_input = gr.Textbox(
@@ -149,16 +160,16 @@ Describe what you're looking for — include size and price if you want to filte
             label="Try these queries",
         )
 
-        outputs = [listing_output, outfit_output, fitcard_output, price_output]
+        outputs = [listing_output, outfit_output, fitcard_output, price_output, style_state]
 
         submit_btn.click(
             fn=handle_query,
-            inputs=[query_input, wardrobe_choice],
+            inputs=[query_input, wardrobe_choice, style_state],
             outputs=outputs,
         )
         query_input.submit(
             fn=handle_query,
-            inputs=[query_input, wardrobe_choice],
+            inputs=[query_input, wardrobe_choice, style_state],
             outputs=outputs,
         )
 

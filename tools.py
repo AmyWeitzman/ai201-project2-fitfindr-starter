@@ -86,14 +86,16 @@ def search_listings(
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
 
-def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
+def suggest_outfit(new_item: dict, wardrobe: dict, style_context: str = "") -> str:
     """
     Given a thrifted item and the user's wardrobe, suggest 1–2 complete outfits.
 
     Args:
-        new_item: A listing dict (the item the user is considering buying).
-        wardrobe: A wardrobe dict with an 'items' key containing a list of
-                  wardrobe item dicts. May be empty — handle this gracefully.
+        new_item:      A listing dict (the item the user is considering buying).
+        wardrobe:      A wardrobe dict with an 'items' key. May be empty.
+        style_context: Optional string describing the user's saved style
+                       preferences (e.g. from their profile). Added to the
+                       prompt when provided.
 
     Returns:
         A non-empty string with outfit suggestions.
@@ -110,11 +112,13 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
     )
 
     wardrobe_items = wardrobe.get("items", [])
+    style_line = f"\nUser's style history: {style_context}\n" if style_context else ""
 
     if not wardrobe_items:
         prompt = (
             "You're a fashion stylist. A user is considering this thrifted find:\n\n"
-            f"{item_summary}\n\n"
+            f"{item_summary}\n"
+            f"{style_line}\n"
             "They haven't set up their wardrobe yet. Describe 1–2 outfit ideas "
             "in general terms — what types of pieces pair well with this item, "
             "what vibe it suits, and how to wear it."
@@ -126,7 +130,8 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
         )
         prompt = (
             "You're a fashion stylist. A user is considering this thrifted find:\n\n"
-            f"{item_summary}\n\n"
+            f"{item_summary}\n"
+            f"{style_line}\n"
             "Here's what they already own:\n"
             f"{wardrobe_lines}\n\n"
             "Suggest 1–2 complete outfit combinations using the new item and "
