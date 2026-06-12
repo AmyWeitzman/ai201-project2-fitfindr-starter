@@ -89,6 +89,12 @@ def handle_query(
             f"Verdict: {verdict['verdict'].title()} {emoji}",
         ])
 
+    # Prepend fallback notice if filters were loosened
+    fallbacks = session.get("search_fallbacks", [])
+    if fallbacks:
+        notice = "ℹ️ Adjusted search: " + "; ".join(fallbacks) + "."
+        listing_text = notice + "\n\n" + listing_text
+
     # Append trend activity to the listing panel
     trend = session.get("trend_report")
     if trend and trend["matched_posts"]:

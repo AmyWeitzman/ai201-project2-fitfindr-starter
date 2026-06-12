@@ -45,6 +45,7 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "fit_card": None,            # string returned by create_fit_card
         "price_verdict": None,       # dict returned by compare_price
         "trend_report": None,        # dict returned by get_trending_styles
+        "search_fallbacks": [],      # filters that were loosened to find results
         "error": None,               # set if the interaction ended early
     }
 
@@ -157,26 +158,44 @@ def run_agent(query: str, wardrobe: dict, style_tags: list | None = None) -> dic
     parsed = _parse_query(query)
     session["parsed"] = parsed
 
-    # Step 3: Search listings — retry without size filter if first pass is empty
-    results = search_listings(
-        description=parsed["description"],
-        size=parsed["size"],
-        max_price=parsed["max_price"],
-    )
+    # Step 3: Search listings with progressive fallback.
+    # Try from most to least restrictive, stopping at the first non-empty result.
+    size = parsed["size"]
+    max_price = parsed["max_price"]
+    desc = parsed["description"]
+    fallbacks: list[str] = []
 
-    if not results and parsed["size"] is not None:
-        results = search_listings(
-            description=parsed["description"],
-            size=None,
-            max_price=parsed["max_price"],
-        )
+    # Attempt 1: all specified filters
+    results = search_listings(description=desc, size=size, max_price=max_price)
+
+    # Attempt 2: drop size
+    if not results and size is not None:
+        results = search_listings(description=desc, size=None, max_price=max_price)
+        if results:
+            fallbacks.append(f"size filter removed (no results for size {size})")
+
+    # Attempt 3: drop price
+    if not results and max_price is not None:
+        results = search_listings(description=desc, size=size, max_price=None)
+        if results:
+            fallbacks.append(f"price filter relaxed (nothing under ${max_price:.0f})")
+
+    # Attempt 4: drop both size and price
+    if not results and size is not None and max_price is not None:
+        results = search_listings(description=desc, size=None, max_price=None)
+        if results:
+            fallbacks = [
+                f"size filter removed (no results for size {size})",
+                f"price filter relaxed (nothing under ${max_price:.0f})",
+            ]
 
     session["search_results"] = results
+    session["search_fallbacks"] = fallbacks
 
     if not results:
-        price_hint = f" under ${parsed['max_price']:.0f}" if parsed["max_price"] else ""
+        price_hint = f" under ${max_price:.0f}" if max_price else ""
         session["error"] = (
-            f"No listings found for \"{parsed['description']}\"{price_hint}. "
+            f"No listings found for \"{desc}\"{price_hint}. "
             "Try different keywords or adjust your filters."
         )
         return session
