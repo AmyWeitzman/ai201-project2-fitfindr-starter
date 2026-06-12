@@ -209,10 +209,16 @@ def run_agent(query: str, wardrobe: dict, style_tags: list | None = None) -> dic
     # Step 4c: Check trend activity for the item's style tags
     session["trend_report"] = get_trending_styles(session["selected_item"].get("style_tags", []))
 
-    # Step 5: Suggest outfit — include session style tags if any have accumulated
-    style_context = ""
+    # Step 5: Suggest outfit — build context from session style tags + trend data
+    context_parts = []
     if style_tags:
-        style_context = "tends toward " + ", ".join(style_tags[:10])
+        context_parts.append("Style preferences: " + ", ".join(style_tags[:10]))
+    trend = session["trend_report"]
+    if trend and trend["matched_posts"]:
+        if trend["top_hashtags"]:
+            context_parts.append("Trending now: " + ", ".join(trend["top_hashtags"][:4]))
+        context_parts.append(trend["summary"])
+    style_context = "\n".join(context_parts)
 
     session["outfit_suggestion"] = suggest_outfit(
         new_item=session["selected_item"],

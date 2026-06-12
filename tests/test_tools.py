@@ -109,6 +109,17 @@ def test_suggest_outfit_with_wardrobe_returns_string():
     assert len(result) > 0
 
 
+def test_suggest_outfit_trend_context_reaches_llm_prompt():
+    mock_client = _mock_groq("Styled with trending grunge vibes.")
+    trend_ctx = "Trending now: #graphictee  #grunge\n~6,190 posts on tiktok — 2 days ago."
+    with patch("tools._get_groq_client", return_value=mock_client):
+        suggest_outfit(SAMPLE_ITEM, SAMPLE_WARDROBE, style_context=trend_ctx)
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    prompt_text = call_kwargs["messages"][0]["content"]
+    assert "#graphictee" in prompt_text
+    assert "incorporate" in prompt_text.lower()
+
+
 # ── create_fit_card ───────────────────────────────────────────────────────────
 
 def test_create_fit_card_empty_outfit_returns_error_string():

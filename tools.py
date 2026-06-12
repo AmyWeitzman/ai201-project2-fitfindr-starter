@@ -112,16 +112,20 @@ def suggest_outfit(new_item: dict, wardrobe: dict, style_context: str = "") -> s
     )
 
     wardrobe_items = wardrobe.get("items", [])
-    style_line = f"\nUser's style history: {style_context}\n" if style_context else ""
+    trend_line = (
+        f"\nContext (incorporate these into your suggestions):\n{style_context}\n"
+        if style_context else ""
+    )
 
     if not wardrobe_items:
         prompt = (
             "You're a fashion stylist. A user is considering this thrifted find:\n\n"
             f"{item_summary}\n"
-            f"{style_line}\n"
+            f"{trend_line}\n"
             "They haven't set up their wardrobe yet. Describe 1–2 outfit ideas "
             "in general terms — what types of pieces pair well with this item, "
-            "what vibe it suits, and how to wear it."
+            "what vibe it suits, and how to wear it. "
+            "If trending styles or hashtags are listed above, reference them naturally."
         )
     else:
         wardrobe_lines = "\n".join(
@@ -131,11 +135,12 @@ def suggest_outfit(new_item: dict, wardrobe: dict, style_context: str = "") -> s
         prompt = (
             "You're a fashion stylist. A user is considering this thrifted find:\n\n"
             f"{item_summary}\n"
-            f"{style_line}\n"
+            f"{trend_line}\n"
             "Here's what they already own:\n"
             f"{wardrobe_lines}\n\n"
             "Suggest 1–2 complete outfit combinations using the new item and "
-            "specific named pieces from their wardrobe."
+            "specific named pieces from their wardrobe. "
+            "If trending styles or hashtags are listed above, reference them naturally."
         )
 
     response = client.chat.completions.create(
