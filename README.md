@@ -77,8 +77,9 @@ python agent.py
 | --------- | ---- | ----------- |
 | `new_item` | `dict` | A listing dict returned by `search_listings` |
 | `wardrobe` | `dict` | A dict with an `'items'` key containing wardrobe item dicts. Can be empty. |
+| `style_context` | `str` | Optional context string passed by the agent — includes the user's accumulated style preferences and live trend data (hashtags, post summary) from `get_trending_styles`. The prompt instructs the LLM to reference trending styles naturally. |
 
-**Output:** A non-empty string with outfit suggestions. If `wardrobe['items']` is empty, returns general styling advice instead of wardrobe-specific combinations.
+**Output:** A non-empty string with outfit suggestions. If `wardrobe['items']` is empty, returns general styling advice instead of wardrobe-specific combinations. When `style_context` includes trend data, the LLM's suggestions visibly reflect what's currently popular for that style.
 
 ---
 
@@ -143,7 +144,13 @@ Verdict thresholds: below 80% of the average -> `"great deal"`, above 120% -> `"
 
 1. **Parse the query** using regex to extract a `description`, `size` (if mentioned), and `max_price` (if mentioned). Filler phrases like "I'm looking for" are stripped so the search gets clean keywords.
 
-2. **Search listings** with the parsed parameters. If the first search returns nothing and a size was specified, the agent retries once without the size filter (in case the user's size isn't listed exactly). If still empty, the agent sets `session["error"]` and returns early — `suggest_outfit` is never called with empty input.
+2. **Search listings** with progressive fallback. The agent tries up to four constraint combinations, stopping at the first non-empty result:
+   1. All specified filters (description + size + price)
+   2. Drop size — if size was specified but yielded no results
+   3. Drop price — if price ceiling was specified but yielded no results
+   4. Drop both size and price
+
+   Every filter that was loosened is recorded in `session["search_fallbacks"]` and shown to the user as a notice (e.g. `ℹ️ Adjusted search: size filter removed (no results for size XXL).`). If all four attempts return empty results, the agent sets `session["error"]` and returns early — `suggest_outfit` is never called with empty input.
 
 3. **Select the top result** (`results[0]`) and store it in the session as `selected_item`.
 
@@ -152,7 +159,7 @@ Verdict thresholds: below 80% of the average -> `"great deal"`, above 120% -> `"
    - `compare_price` scores the listing against similar items in the dataset. Stored in `session["price_verdict"]`. Returns "no comparison available" if no comparables exist.
    - `get_trending_styles` looks up recent social posts whose style tags overlap with the item's. Stored in `session["trend_report"]`. Shown in the listing panel alongside item details.
 
-5. **Suggest an outfit** using the selected item and the user's wardrobe.
+5. **Suggest an outfit** using the selected item, the user's wardrobe, and a combined context string built from the user's accumulated style tags and the trend report (hashtags + post summary). The LLM prompt explicitly instructs the model to reference trending styles naturally in its suggestions.
 
 6. **Generate a fit card** using the outfit suggestion and the selected item.
 
@@ -177,6 +184,7 @@ session = {
     "fit_card": None,
     "price_verdict": None,
     "trend_report": None,
+    "search_fallbacks": [],
     "error": None,
 }
 ```
@@ -189,7 +197,7 @@ Each step reads from this dict and writes its result back to it. `suggest_outfit
 
 | Tool | Failure mode | What the agent does |
 | ---- | ------------ | ------------------- |
-| `search_listings` | No listings match the query | Retries once without the size filter. If still empty, sets `session["error"]` with a message like `"No listings found for "designer ballgown" under $5. Try different keywords or adjust your filters."` and returns without calling the other tools. |
+| `search_listings` | No listings match the query | Retries up to three more times with progressively looser filters: drop size, drop price, drop both. Each dropped filter is recorded in `session["search_fallbacks"]` and shown to the user. If all attempts return empty, sets `session["error"]` (e.g. `"No listings found for "designer ballgown" under $5."`) and returns without calling the other tools. |
 | `suggest_outfit` | Wardrobe is empty | Skips the wardrobe-specific prompt and asks the LLM for general styling advice instead. Does not raise an exception or return an empty string. |
 | `create_fit_card` | Outfit input is missing or incomplete | Returns `"Couldn't generate a fit card — no outfit suggestion was provided."` immediately, without making an LLM API call. |
 
