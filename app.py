@@ -20,31 +20,100 @@ from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 # ── query handler ─────────────────────────────────────────────────────────────
 
-def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
+def handle_query(
+    user_query: str,
+    wardrobe_choice: str,
+    style_tags: list,
+) -> tuple[str, str, str, str, list]:
     """
     Called by Gradio when the user submits a query.
 
     Args:
         user_query:     The text the user typed into the search box.
         wardrobe_choice: Either "Example wardrobe" or "Empty wardrobe (new user)".
+        style_tags:     Accumulated style tags from earlier searches this session
+                        (held in gr.State — starts empty, grows automatically).
 
     Returns:
-        A tuple of three strings:
-            (listing_text, outfit_suggestion, fit_card)
-        Each string maps to one of the three output panels in the UI.
-
-    TODO:
-        1. Guard against an empty query (return early with an error message).
-        2. Select the wardrobe based on wardrobe_choice.
-        3. Call run_agent() with the query and selected wardrobe.
-        4. If session["error"] is set, return the error in the first panel
-           and empty strings for the other two.
-        5. Otherwise, format session["selected_item"] into a readable listing_text
-           string and return it along with session["outfit_suggestion"] and
-           session["fit_card"].
+        A tuple of four visible strings plus the updated style_tags state:
+            (listing_text, outfit_suggestion, fit_card, price_text, updated_style_tags)
     """
-    # TODO: implement this function
-    return "Agent not yet implemented.", "", ""
+    # Guard empty query
+    if not user_query or not user_query.strip():
+        return "Please enter a search query.", "", "", "", style_tags
+
+    # Select wardrobe based on radio choice
+    wardrobe = (
+        get_example_wardrobe()
+        if wardrobe_choice == "Example wardrobe"
+        else get_empty_wardrobe()
+    )
+
+    # Run the planning loop, passing in whatever style tags have built up this session
+    session = run_agent(user_query.strip(), wardrobe, style_tags=style_tags)
+
+    # Surface error in first panel if the agent exited early
+    if session["error"]:
+        return session["error"], "", "", "", style_tags
+
+    # Format the selected listing into readable text
+    item = session["selected_item"]
+    lines = [
+        item["title"],
+        "",
+        f"Price:      ${item['price']:.2f}",
+        f"Size:       {item['size']}",
+        f"Condition:  {item['condition']}",
+        f"Platform:   {item['platform']}",
+        f"Colors:     {', '.join(item['colors'])}",
+    ]
+    if item.get("brand"):
+        lines.append(f"Brand:      {item['brand']}")
+    lines += ["", item["description"]]
+    listing_text = "\n".join(lines)
+
+    # Format the price verdict
+    verdict = session["price_verdict"]
+    if verdict["comparable_count"] == 0:
+        price_text = verdict["summary"]
+    else:
+        emoji = {"great deal": "✅", "fair price": "✓", "a bit high": "⚠️"}.get(
+            verdict["verdict"], ""
+        )
+        price_text = "\n".join([
+            f"This item:    ${verdict['item_price']:.2f}",
+            f"Avg similar:  ${verdict['avg_price']:.2f}",
+            f"Range:        ${verdict['min_price']:.2f} – ${verdict['max_price']:.2f}",
+            f"Comparables:  {verdict['comparable_count']} listing(s)",
+            "",
+            f"Verdict: {verdict['verdict'].title()} {emoji}",
+        ])
+
+    # Prepend fallback notice if filters were loosened
+    fallbacks = session.get("search_fallbacks", [])
+    if fallbacks:
+        notice = "ℹ️ Adjusted search: " + "; ".join(fallbacks) + "."
+        listing_text = notice + "\n\n" + listing_text
+
+    # Append trend activity to the listing panel
+    trend = session.get("trend_report")
+    if trend and trend["matched_posts"]:
+        trend_lines = ["", "─" * 40, "🔥 Trending now", trend["summary"], ""]
+        for post in trend["matched_posts"]:
+            age = f"{post['days_ago']}d ago"
+            count = f"{post['post_count']:,} posts"
+            trend_lines.append(f"[{post['platform']} · {count} · {age}]")
+            trend_lines.append(f'"{post["caption"]}"')
+            trend_lines.append("  " + "  ".join(post["hashtags"][:4]))
+            trend_lines.append("")
+        if trend["top_hashtags"]:
+            trend_lines.append("Top tags: " + "  ".join(trend["top_hashtags"]))
+        listing_text += "\n" + "\n".join(trend_lines)
+
+    # Accumulate style tags from this search into session state
+    updated_tags = sorted(set(style_tags) | set(item.get("style_tags", [])))[:20]
+
+    return listing_text, session["outfit_suggestion"], session["fit_card"], price_text, updated_tags
 
 
 # ── interface ─────────────────────────────────────────────────────────────────
@@ -64,6 +133,9 @@ def build_interface():
 Find secondhand pieces and get outfit ideas based on your wardrobe.
 Describe what you're looking for — include size and price if you want to filter.
         """)
+
+        # Holds accumulated style tags for the duration of the browser session
+        style_state = gr.State([])
 
         with gr.Row():
             query_input = gr.Textbox(
@@ -97,6 +169,11 @@ Describe what you're looking for — include size and price if you want to filte
                 lines=8,
                 interactive=False,
             )
+            price_output = gr.Textbox(
+                label="💰 Price comparison",
+                lines=8,
+                interactive=False,
+            )
 
         gr.Examples(
             examples=[[q, "Example wardrobe"] for q in EXAMPLE_QUERIES],
@@ -104,15 +181,17 @@ Describe what you're looking for — include size and price if you want to filte
             label="Try these queries",
         )
 
+        outputs = [listing_output, outfit_output, fitcard_output, price_output, style_state]
+
         submit_btn.click(
             fn=handle_query,
-            inputs=[query_input, wardrobe_choice],
-            outputs=[listing_output, outfit_output, fitcard_output],
+            inputs=[query_input, wardrobe_choice, style_state],
+            outputs=outputs,
         )
         query_input.submit(
             fn=handle_query,
-            inputs=[query_input, wardrobe_choice],
-            outputs=[listing_output, outfit_output, fitcard_output],
+            inputs=[query_input, wardrobe_choice, style_state],
+            outputs=outputs,
         )
 
     return demo

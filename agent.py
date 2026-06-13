@@ -18,7 +18,9 @@ Usage (once implemented):
     print(result["error"])   # None on success
 """
 
-from tools import search_listings, suggest_outfit, create_fit_card
+import re
+
+from tools import search_listings, suggest_outfit, create_fit_card, compare_price, get_trending_styles
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -41,13 +43,70 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "wardrobe": wardrobe,        # user's wardrobe dict
         "outfit_suggestion": None,   # string returned by suggest_outfit
         "fit_card": None,            # string returned by create_fit_card
+        "price_verdict": None,       # dict returned by compare_price
+        "trend_report": None,        # dict returned by get_trending_styles
+        "search_fallbacks": [],      # filters that were loosened to find results
         "error": None,               # set if the interaction ended early
     }
 
 
+# ── query parser ─────────────────────────────────────────────────────────────
+
+def _parse_query(query: str) -> dict:
+    """
+    Extract description, size, and max_price from a natural language query
+    using regex. Falls back to the full query text as the description if
+    nothing useful can be stripped out.
+    """
+    text = query.lower()
+
+    # max_price: "under $30", "up to $40", "below $25", "$30 or less"
+    price_match = re.search(
+        r'(?:under|max|up to|below|for)\s*\$(\d+(?:\.\d+)?)'
+        r'|\$(\d+(?:\.\d+)?)\s*(?:or less|max)',
+        text,
+    )
+    max_price = None
+    if price_match:
+        raw = price_match.group(1) or price_match.group(2)
+        max_price = float(raw)
+
+    # size: "size M", "in size M", "in M" — matches common clothing sizes
+    size_match = re.search(
+        r'(?:size\s+|in\s+size\s+|in\s+)(xxs|xs|xl|xxl|s\b|m\b|l\b'
+        r'|w\d+(?:\s+l\d+)?|us\s*\d+(?:\.\d+)?|one size)',
+        text,
+    )
+    size = size_match.group(1).strip().upper() if size_match else None
+
+    # description: strip price/size clauses and common filler openers
+    description = query
+    if price_match:
+        description = re.sub(
+            r'(?:under|max|up to|below|for)\s*\$\d+(?:\.\d+)?'
+            r'|\$\d+(?:\.\d+)?\s*(?:or less|max)',
+            '', description, flags=re.IGNORECASE,
+        )
+    if size_match:
+        description = re.sub(
+            r'(?:size\s+|in\s+size\s+|in\s+)'
+            r'(?:xxs|xs|xl|xxl|s|m|l|w\d+(?:\s+l\d+)?|us\s*\d+(?:\.\d+)?|one size)',
+            '', description, flags=re.IGNORECASE,
+        )
+    description = re.sub(
+        r"^(?:i'?m?\s+)?(?:looking for|trying to find|find me|want|need|searching for)"
+        r'\s+(?:a\s+|an\s+)?',
+        '', description.strip(), flags=re.IGNORECASE,
+    )
+    description = re.sub(r'^(?:a\s+|an\s+)', '', description.strip(), flags=re.IGNORECASE)
+    description = description.strip(' ,.-') or query  # fallback to full query
+
+    return {"description": description, "size": size, "max_price": max_price}
+
+
 # ── planning loop ─────────────────────────────────────────────────────────────
 
-def run_agent(query: str, wardrobe: dict) -> dict:
+def run_agent(query: str, wardrobe: dict, style_tags: list | None = None) -> dict:
     """
     Main agent entry point. Runs the FitFindr planning loop for a single
     user interaction and returns the completed session dict.
@@ -92,9 +151,88 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # TODO: implement the planning loop
+    # Step 1: Initialize session
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+
+    # Step 2: Parse query into description / size / max_price
+    parsed = _parse_query(query)
+    session["parsed"] = parsed
+
+    # Step 3: Search listings with progressive fallback.
+    # Try from most to least restrictive, stopping at the first non-empty result.
+    size = parsed["size"]
+    max_price = parsed["max_price"]
+    desc = parsed["description"]
+    fallbacks: list[str] = []
+
+    # Attempt 1: all specified filters
+    results = search_listings(description=desc, size=size, max_price=max_price)
+
+    # Attempt 2: drop size
+    if not results and size is not None:
+        results = search_listings(description=desc, size=None, max_price=max_price)
+        if results:
+            fallbacks.append(f"size filter removed (no results for size {size})")
+
+    # Attempt 3: drop price
+    if not results and max_price is not None:
+        results = search_listings(description=desc, size=size, max_price=None)
+        if results:
+            fallbacks.append(f"price filter relaxed (nothing under ${max_price:.0f})")
+
+    # Attempt 4: drop both size and price
+    if not results and size is not None and max_price is not None:
+        results = search_listings(description=desc, size=None, max_price=None)
+        if results:
+            fallbacks = [
+                f"size filter removed (no results for size {size})",
+                f"price filter relaxed (nothing under ${max_price:.0f})",
+            ]
+
+    session["search_results"] = results
+    session["search_fallbacks"] = fallbacks
+
+    if not results:
+        price_hint = f" under ${max_price:.0f}" if max_price else ""
+        session["error"] = (
+            f"No listings found for \"{desc}\"{price_hint}. "
+            "Try different keywords or adjust your filters."
+        )
+        return session
+
+    # Step 4: Select top result
+    session["selected_item"] = results[0]
+
+    # Step 4b: Compare price against similar listings
+    session["price_verdict"] = compare_price(session["selected_item"])
+
+    # Step 4c: Check trend activity for the item's style tags
+    session["trend_report"] = get_trending_styles(session["selected_item"].get("style_tags", []))
+
+    # Step 5: Suggest outfit — build context from session style tags + trend data
+    context_parts = []
+    if style_tags:
+        context_parts.append("Style preferences: " + ", ".join(style_tags[:10]))
+    trend = session["trend_report"]
+    if trend and trend["matched_posts"]:
+        if trend["top_hashtags"]:
+            context_parts.append("Trending now: " + ", ".join(trend["top_hashtags"][:4]))
+        context_parts.append(trend["summary"])
+    style_context = "\n".join(context_parts)
+
+    session["outfit_suggestion"] = suggest_outfit(
+        new_item=session["selected_item"],
+        wardrobe=session["wardrobe"],
+        style_context=style_context,
+    )
+
+    # Step 6: Generate fit card from outfit and selected item
+    session["fit_card"] = create_fit_card(
+        outfit=session["outfit_suggestion"],
+        new_item=session["selected_item"],
+    )
+
+    # Step 7: Return completed session
     return session
 
 

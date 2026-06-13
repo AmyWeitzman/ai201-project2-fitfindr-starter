@@ -1,15 +1,14 @@
 """
 tools.py
 
-The three required FitFindr tools. Each tool is a standalone function that
-can be called and tested independently before being wired into the agent loop.
-
-Complete and test each tool before moving to agent.py.
+The FitFindr tools. Each tool is a standalone function that can be called
+and tested independently before being wired into the agent loop.
 
 Tools:
     search_listings(description, size, max_price)  → list[dict]
     suggest_outfit(new_item, wardrobe)              → str
     create_fit_card(outfit, new_item)               → str
+    compare_price(item)                             → dict
 """
 
 import os
@@ -17,7 +16,7 @@ import os
 from dotenv import load_dotenv
 from groq import Groq
 
-from utils.data_loader import load_listings
+from utils.data_loader import load_listings, load_trend_posts
 
 load_dotenv()
 
@@ -59,49 +58,96 @@ def search_listings(
     Each listing dict has the following fields:
         id, title, description, category, style_tags (list), size,
         condition, price (float), colors (list), brand, platform
-
-    TODO:
-        1. Load all listings with load_listings().
-        2. Filter by max_price and size (if provided).
-        3. Score each remaining listing by keyword overlap with `description`.
-        4. Drop any listings with a score of 0 (no relevant matches).
-        5. Sort by score, highest first, and return the listing dicts.
-
-    Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+    listings = load_listings()
+
+    if max_price is not None:
+        listings = [l for l in listings if l["price"] <= max_price]
+
+    if size is not None:
+        listings = [l for l in listings if size.lower() in l["size"].lower()]
+
+    keywords = set(description.lower().split())
+
+    def score(listing):
+        searchable = " ".join([
+            listing["title"].lower(),
+            listing["description"].lower(),
+            " ".join(tag.lower() for tag in listing["style_tags"]),
+        ])
+        return sum(1 for kw in keywords if kw in searchable)
+
+    scored = [(score(l), l) for l in listings]
+    scored = [(s, l) for s, l in scored if s > 0]
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    return [l for _, l in scored]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
 
-def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
+def suggest_outfit(new_item: dict, wardrobe: dict, style_context: str = "") -> str:
     """
     Given a thrifted item and the user's wardrobe, suggest 1–2 complete outfits.
 
     Args:
-        new_item: A listing dict (the item the user is considering buying).
-        wardrobe: A wardrobe dict with an 'items' key containing a list of
-                  wardrobe item dicts. May be empty — handle this gracefully.
+        new_item:      A listing dict (the item the user is considering buying).
+        wardrobe:      A wardrobe dict with an 'items' key. May be empty.
+        style_context: Optional string describing the user's saved style
+                       preferences (e.g. from their profile). Added to the
+                       prompt when provided.
 
     Returns:
         A non-empty string with outfit suggestions.
-        If the wardrobe is empty, offer general styling advice for the item
+        If the wardrobe is empty, offers general styling advice for the item
         rather than raising an exception or returning an empty string.
-
-    TODO:
-        1. Check whether wardrobe['items'] is empty.
-        2. If empty: call the LLM with a prompt for general styling ideas
-           (what kinds of items pair well, what vibe it suits, etc.).
-        3. If not empty: format the wardrobe items into a prompt and ask
-           the LLM to suggest specific outfit combinations using the new item
-           and named pieces from the wardrobe.
-        4. Return the LLM's response as a string.
-
-    Before writing code, fill in the Tool 2 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    client = _get_groq_client()
+
+    item_summary = (
+        f"{new_item['title']} — {new_item['category']}, size {new_item['size']}, "
+        f"${new_item['price']}\n"
+        f"Style tags: {', '.join(new_item['style_tags'])}\n"
+        f"Colors: {', '.join(new_item['colors'])}"
+    )
+
+    wardrobe_items = wardrobe.get("items", [])
+    trend_line = (
+        f"\nContext (incorporate these into your suggestions):\n{style_context}\n"
+        if style_context else ""
+    )
+
+    if not wardrobe_items:
+        prompt = (
+            "You're a fashion stylist. A user is considering this thrifted find:\n\n"
+            f"{item_summary}\n"
+            f"{trend_line}\n"
+            "They haven't set up their wardrobe yet. Describe 1–2 outfit ideas "
+            "in general terms — what types of pieces pair well with this item, "
+            "what vibe it suits, and how to wear it. "
+            "If trending styles or hashtags are listed above, reference them naturally."
+        )
+    else:
+        wardrobe_lines = "\n".join(
+            f"- {item['name']} ({item['category']}, colors: {', '.join(item['colors'])})"
+            for item in wardrobe_items
+        )
+        prompt = (
+            "You're a fashion stylist. A user is considering this thrifted find:\n\n"
+            f"{item_summary}\n"
+            f"{trend_line}\n"
+            "Here's what they already own:\n"
+            f"{wardrobe_lines}\n\n"
+            "Suggest 1–2 complete outfit combinations using the new item and "
+            "specific named pieces from their wardrobe. "
+            "If trending styles or hashtags are listed above, reference them naturally."
+        )
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -116,22 +162,189 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
 
     Returns:
         A 2–4 sentence string usable as an Instagram/TikTok caption.
-        If outfit is empty or missing, return a descriptive error message
-        string — do NOT raise an exception.
+        If outfit is empty or missing, returns a descriptive error message
+        string — does NOT raise an exception.
 
-    The caption should:
-    - Feel casual and authentic (like a real OOTD post, not a product description)
-    - Mention the item name, price, and platform naturally (once each)
-    - Capture the outfit vibe in specific terms
-    - Sound different each time for different inputs (use higher LLM temperature)
-
-    TODO:
-        1. Guard against an empty or whitespace-only outfit string.
-        2. Build a prompt that gives the LLM the item details and the outfit,
-           and asks for a caption matching the style guidelines above.
-        3. Call the LLM and return the response.
-
-    Before writing code, fill in the Tool 3 section of planning.md.
+    The caption:
+    - Feels casual and authentic (like a real OOTD post)
+    - Mentions the item name, price, and platform naturally (once each)
+    - Captures the outfit vibe in specific terms
+    - Varies across runs (uses higher LLM temperature)
     """
-    # Replace this with your implementation
-    return ""
+    if not outfit or not outfit.strip():
+        return "Couldn't generate a fit card — no outfit suggestion was provided."
+
+    client = _get_groq_client()
+
+    prompt = (
+        "Write a 2–4 sentence Instagram/TikTok OOTD caption for this thrifted find.\n\n"
+        f"Item: {new_item['title']}\n"
+        f"Price: ${new_item['price']}\n"
+        f"Platform: {new_item['platform']}\n"
+        f"Outfit: {outfit}\n\n"
+        "Rules:\n"
+        "- Sound casual and authentic — like something a real person would actually post\n"
+        "- Mention the item name, price, and platform once each, worked in naturally\n"
+        "- Describe the outfit vibe in specific terms, not generic phrases\n"
+        "- Keep it under 4 sentences"
+    )
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=1.2,
+    )
+    return response.choices[0].message.content
+
+
+# ── Tool 4: get_trending_styles ──────────────────────────────────────────────
+
+def get_trending_styles(style_tags: list[str]) -> dict:
+    """
+    Surface recent social posts about styles that match the given tags.
+
+    Matches mock trend posts by style_tag overlap with the item's tags.
+    Posts are ranked by number of matching tags, then by recency.
+
+    Args:
+        style_tags: Style tags from the selected listing (e.g. ["vintage", "grunge"]).
+
+    Returns:
+        A dict with:
+            matched_posts  (list[dict]): up to 3 most relevant trend posts,
+                           each containing caption, hashtags, platform,
+                           post_count, and days_ago.
+            top_hashtags   (list[str]):  up to 5 most popular hashtags across
+                           matched posts, sorted by post_count descending.
+            summary        (str):        one human-readable line summarising
+                           the trend activity, or a fallback if no matches.
+
+        Returns a summary-only dict if no posts match.
+    """
+    posts = load_trend_posts()
+    query_tags = set(t.lower() for t in style_tags)
+
+    def overlap(post):
+        return len(query_tags & set(t.lower() for t in post["style_tags"]))
+
+    scored = [(overlap(p), p) for p in posts if overlap(p) > 0]
+    scored.sort(key=lambda x: (-x[0], x[1]["days_ago"]))
+
+    top = [p for _, p in scored[:3]]
+
+    if not top:
+        return {
+            "matched_posts": [],
+            "top_hashtags": [],
+            "summary": "No recent trend posts found for this style.",
+        }
+
+    all_hashtags = [tag for p in top for tag in p["hashtags"]]
+    seen = set()
+    unique_hashtags = []
+    for tag in all_hashtags:
+        if tag not in seen:
+            seen.add(tag)
+            unique_hashtags.append(tag)
+
+    total_posts = sum(p["post_count"] for p in top)
+    platforms = sorted({p["platform"] for p in top})
+    freshest = min(p["days_ago"] for p in top)
+    summary = (
+        f"~{total_posts:,} posts about this style on {', '.join(platforms)} "
+        f"— most recent {freshest} day{'s' if freshest != 1 else ''} ago."
+    )
+
+    return {
+        "matched_posts": [
+            {
+                "caption": p["caption"],
+                "hashtags": p["hashtags"],
+                "platform": p["platform"],
+                "post_count": p["post_count"],
+                "days_ago": p["days_ago"],
+            }
+            for p in top
+        ],
+        "top_hashtags": unique_hashtags[:5],
+        "summary": summary,
+    }
+
+
+# ── Tool 5: compare_price ─────────────────────────────────────────────────────
+
+def compare_price(item: dict) -> dict:
+    """
+    Estimate whether a listing's price is fair by comparing it against
+    similar items in the dataset.
+
+    "Similar" means: same category AND at least one overlapping style tag.
+    The item itself is excluded from the comparison pool.
+
+    Args:
+        item: A listing dict (e.g., the selected_item from the agent session).
+
+    Returns:
+        A dict with the following fields:
+            verdict          (str):   "great deal", "fair price", or "a bit high"
+            item_price       (float): the listing's price
+            avg_price        (float | None): average price of comparable listings
+            min_price        (float | None): cheapest comparable
+            max_price        (float | None): most expensive comparable
+            comparable_count (int):   number of comparable listings found
+            summary          (str):   human-readable one-line summary
+
+        If no comparable listings exist, verdict is "no comparison available"
+        and the price fields are None. Does NOT raise an exception.
+    """
+    all_listings = load_listings()
+    item_tags = set(item["style_tags"])
+
+    comparables = [
+        l for l in all_listings
+        if l["id"] != item["id"]
+        and l["category"] == item["category"]
+        and item_tags & set(l["style_tags"])
+    ]
+
+    if not comparables:
+        return {
+            "verdict": "no comparison available",
+            "item_price": item["price"],
+            "avg_price": None,
+            "min_price": None,
+            "max_price": None,
+            "comparable_count": 0,
+            "summary": (
+                f"No comparable listings found for {item['title']} — "
+                "can't estimate whether this price is fair."
+            ),
+        }
+
+    prices = [l["price"] for l in comparables]
+    avg = sum(prices) / len(prices)
+    min_price = min(prices)
+    max_price = max(prices)
+
+    ratio = item["price"] / avg
+    if ratio < 0.8:
+        verdict = "great deal"
+    elif ratio > 1.2:
+        verdict = "a bit high"
+    else:
+        verdict = "fair price"
+
+    return {
+        "verdict": verdict,
+        "item_price": item["price"],
+        "avg_price": round(avg, 2),
+        "min_price": min_price,
+        "max_price": max_price,
+        "comparable_count": len(comparables),
+        "summary": (
+            f"${item['price']:.2f} vs. avg ${avg:.2f} across "
+            f"{len(comparables)} similar listing(s) "
+            f"(range: ${min_price:.2f}–${max_price:.2f}). "
+            f"Verdict: {verdict}."
+        ),
+    }
